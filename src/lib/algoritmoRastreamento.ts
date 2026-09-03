@@ -1,6 +1,3 @@
-import fs from 'fs';
-import path from 'path';
-
 // Dimensões do campo fornecidas pela Metrica Sports
 const COMPRIMENTO_CAMPO = 105; // metros
 const LARGURA_CAMPO = 68; // metros
@@ -9,13 +6,14 @@ export interface MetricaJogador {
   id: string;
   distanciaTotal: number;
   velocidadeMaxima: number;
-  distanciaSprint: number; // Distância acima de 20 km/h
+  distanciaAndando: number; // <= 7.2 km/h
+  distanciaTrotando: number; // > 7.2 e <= 14.4 km/h
+  distanciaCorrendo: number; // > 14.4 e <= 19.8 km/h
+  distanciaSprint: number; // > 19.8 km/h
 }
 
-export function processarRastreamento(caminhoArquivo: string): MetricaJogador[] {
-  // Lendo arquivo CSV
-  const conteudo = fs.readFileSync(caminhoArquivo, 'utf-8');
-  const linhas = conteudo.split('\n');
+export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
+  const linhas = conteudoCsv.split('\n');
   
   if (linhas.length < 4) {
     throw new Error('Arquivo de dados inválido ou vazio.');
@@ -40,7 +38,15 @@ export function processarRastreamento(caminhoArquivo: string): MetricaJogador[] 
   // Resultados agregados
   const resultados: Record<string, MetricaJogador> = {};
   Object.keys(mapaJogadores).forEach(id => {
-    resultados[id] = { id, distanciaTotal: 0, velocidadeMaxima: 0, distanciaSprint: 0 };
+    resultados[id] = { 
+      id, 
+      distanciaTotal: 0, 
+      velocidadeMaxima: 0, 
+      distanciaAndando: 0,
+      distanciaTrotando: 0,
+      distanciaCorrendo: 0,
+      distanciaSprint: 0 
+    };
   });
 
   // Linha 4 em diante são os frames de dados
@@ -82,7 +88,14 @@ export function processarRastreamento(caminhoArquivo: string): MetricaJogador[] 
           if (velocidadeKmh > resultados[id].velocidadeMaxima) {
             resultados[id].velocidadeMaxima = velocidadeKmh;
           }
-          if (velocidadeKmh >= 20) {
+          
+          if (velocidadeKmh <= 7.2) {
+            resultados[id].distanciaAndando += distancia;
+          } else if (velocidadeKmh <= 14.4) {
+            resultados[id].distanciaTrotando += distancia;
+          } else if (velocidadeKmh <= 19.8) {
+            resultados[id].distanciaCorrendo += distancia;
+          } else {
             resultados[id].distanciaSprint += distancia;
           }
         }

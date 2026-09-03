@@ -1,15 +1,31 @@
-import { NextResponse } from 'next/server';
-import path from 'path';
+import { NextRequest, NextResponse } from 'next/server';
 import { processarRastreamento } from '@/lib/algoritmoRastreamento';
 import { salvarMetricasSupabase } from '@/lib/clienteSupabase';
 
-export async function GET() {
+export async function POST(request: NextRequest) {
   try {
-    // Caminho fixo para o arquivo CSV de teste local
-    const caminhoCsv = path.join(process.cwd(), 'dados', 'dados_rastreamento_exemplo.csv');
+    const formData = await request.formData();
+    const url = formData.get('url') as string;
+    const file = formData.get('file') as File;
+
+    let conteudoCsv = '';
+
+    if (url) {
+      // Buscar arquivo dinamicamente da URL (ex: repositório da Metrica Sports)
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Erro ao baixar arquivo da URL: ${response.statusText}`);
+      }
+      conteudoCsv = await response.text();
+    } else if (file) {
+      // Processar upload de arquivo
+      conteudoCsv = await file.text();
+    } else {
+      return NextResponse.json({ sucesso: false, erro: 'Forneça um "file" ou uma "url".' }, { status: 400 });
+    }
     
     // Processa os dados brutos de cinemática
-    const metricas = processarRastreamento(caminhoCsv);
+    const metricas = processarRastreamento(conteudoCsv);
     
     // Simula (ou executa) o salvamento no Supabase
     await salvarMetricasSupabase(metricas);
