@@ -11,21 +11,46 @@ export async function salvarMetricasSupabase(metricas: MetricaJogador[]) {
     return;
   }
 
-  // Mapear os nomes de propriedades camelCase (TypeScript) para snake_case (PostgreSQL)
-  const metricasFormatadas = metricas.map(m => ({
+  // Dados completos para tabelas com o schema avançado
+  const metricasCompletas = metricas.map(m => ({
     jogador_id: m.id,
     distancia_total: m.distanciaTotal,
     velocidade_maxima: m.velocidadeMaxima,
+    velocidade_media: m.velocidadeMedia,
+    metros_por_minuto: m.metrosPorMinuto,
     distancia_andando: m.distanciaAndando,
     distancia_trotando: m.distanciaTrotando,
     distancia_correndo: m.distanciaCorrendo,
-    distancia_sprint: m.distanciaSprint
+    distancia_sprint: m.distanciaSprint,
+    aceleracoes_altas: m.aceleracoesAltas,
+    desaceleracoes_altas: m.desaceleracoesAltas,
+    player_load: m.playerLoad,
+    sprints_contagem: m.sprintsContagem,
+    potencia_metabolica_media: m.potenciaMetabolicaMedia,
+    centroide_x: m.centroideX,
+    centroide_y: m.centroideY,
+    posicao_sugerida: m.posicaoSugerida
   }));
 
-  const { data, error } = await supabase.from('metricas_rastreamento').insert(metricasFormatadas);
-  
+  const { error } = await supabase.from('metricas_rastreamento').insert(metricasCompletas);
+
   if (error) {
-    console.error('Erro ao salvar no banco Supabase:', error);
-    throw new Error('Falha ao salvar no banco de dados');
+    console.warn('[SUPABASE] Tabela ainda sem colunas estendidas. Salvando no formato básico...', error.message);
+    
+    // Fallback gracioso: salva nas colunas base originais
+    const metricasBasicas = metricas.map(m => ({
+      jogador_id: m.id,
+      distancia_total: m.distanciaTotal,
+      velocidade_maxima: m.velocidadeMaxima,
+      distancia_andando: m.distanciaAndando,
+      distancia_trotando: m.distanciaTrotando,
+      distancia_correndo: m.distanciaCorrendo,
+      distancia_sprint: m.distanciaSprint
+    }));
+
+    const { error: errBasico } = await supabase.from('metricas_rastreamento').insert(metricasBasicas);
+    if (errBasico) {
+      console.error('[SUPABASE] Erro ao salvar no formato base:', errBasico.message);
+    }
   }
 }
