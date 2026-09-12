@@ -41,5 +41,15 @@ Period,Frame,Time [s],Player11_X,Player11_Y
     expect(jogador.centroideY).toBeCloseTo(34, 1);
     expect(jogador.posicaoSugerida).toBeDefined();
     expect(jogador.amostrasPosicao).toBeDefined();
+
+    // Blocos Temporais e Fadiga
+    expect(jogador.blocosTemporais).toBeDefined();
+    expect(jogador.blocosTemporais?.length).toBe(6);
+    expect(jogador.blocosTemporais?.[0].rotulo).toBe("0-15'");
+    expect(jogador.analisePrimeiroTempo).toBeDefined();
+    expect(jogador.analiseSegundoTempo).toBeDefined();
+    expect(jogador.diagnosticoFadiga).toBeDefined();
+    expect(jogador.diagnosticoFadiga?.tipo).toBeDefined();
+    expect(jogador.diagnosticoFadiga?.recomendacaoComissao).toBeDefined();
   });
 });

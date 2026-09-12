@@ -7,6 +7,22 @@ export interface PontoPosicao {
   y: number; // metros (0 a 68)
 }
 
+export interface BlocoTemporal {
+  indice: number;
+  rotulo: string; // "0-15'", "15-30'", "30-45'", "45-60'", "60-75'", "75-90'+"
+  tempoInicioMinutos: number;
+  tempoFimMinutos: number;
+  distanciaTotal: number;
+  metrosPorMinuto: number;
+  distanciaHSR: number; // Z4 (19.8 a 25.2 km/h)
+  distanciaSprint: number; // Z5 (> 25.2 km/h)
+  sprintsContagem: number;
+  velocidadeMaxima: number;
+  aceleracoesAltas: number;
+  decaimentoPercentual: number; // % de variação em relação ao bloco pico
+  classificacao: 'pico' | 'otimo' | 'estavel' | 'queda-moderada' | 'queda-severa';
+}
+
 export interface MetricaJogador {
   id: string;
   // Cinemática básica & Intensidade
@@ -54,6 +70,20 @@ export interface MetricaJogador {
   raioAcao: number; // dispersão espacial em metros (amplitude de cobertura)
   posicaoSugerida: string; // Inferência tática (ex: Lateral, Zagueiro, Meia, Atacante)
   amostrasPosicao: PontoPosicao[]; // Amostragem temporal para heatmap / trilha tática
+
+  // Análise Temporal de Decaimento de Intensidade & Fadiga (Blocos de 15' e 1ºT vs 2ºT)
+  blocosTemporais?: BlocoTemporal[];
+  analisePrimeiroTempo?: { distancia: number; metrosPorMinuto: number; hsr: number; sprints: number };
+  analiseSegundoTempo?: { distancia: number; metrosPorMinuto: number; hsr: number; sprints: number };
+  decaimentoSegundoTempoPercentual?: number;
+  momentoQuedaIntensidade?: string;
+  diagnosticoFadiga?: {
+    tipo: string;
+    momentoQueda: string;
+    quedaPercentual: number;
+    recomendacaoComissao: string;
+    gravidade: 'normal' | 'alerta' | 'critico';
+  };
 }
 
 interface EstadoJogadorAnterior {
@@ -109,6 +139,25 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
 
   const estadoAnterior: Record<string, EstadoJogadorAnterior> = {};
 
+  interface AcumuladorBloco {
+    distancia: number;
+    tempoSegundos: number;
+    distanciaHSR: number;
+    distanciaSprint: number;
+    sprintsContagem: number;
+    velocidadeMaxima: number;
+    aceleracoesAltas: number;
+  }
+
+  const criarBlocosIniciais = (): AcumuladorBloco[] => [
+    { distancia: 0, tempoSegundos: 0, distanciaHSR: 0, distanciaSprint: 0, sprintsContagem: 0, velocidadeMaxima: 0, aceleracoesAltas: 0 },
+    { distancia: 0, tempoSegundos: 0, distanciaHSR: 0, distanciaSprint: 0, sprintsContagem: 0, velocidadeMaxima: 0, aceleracoesAltas: 0 },
+    { distancia: 0, tempoSegundos: 0, distanciaHSR: 0, distanciaSprint: 0, sprintsContagem: 0, velocidadeMaxima: 0, aceleracoesAltas: 0 },
+    { distancia: 0, tempoSegundos: 0, distanciaHSR: 0, distanciaSprint: 0, sprintsContagem: 0, velocidadeMaxima: 0, aceleracoesAltas: 0 },
+    { distancia: 0, tempoSegundos: 0, distanciaHSR: 0, distanciaSprint: 0, sprintsContagem: 0, velocidadeMaxima: 0, aceleracoesAltas: 0 },
+    { distancia: 0, tempoSegundos: 0, distanciaHSR: 0, distanciaSprint: 0, sprintsContagem: 0, velocidadeMaxima: 0, aceleracoesAltas: 0 }
+  ];
+
   // Acumuladores e resultados
   const acumuladores: Record<
     string,
@@ -121,6 +170,9 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
       numAmostrasValidas: number;
       somaPotenciaMetabolicaPonderada: number;
       contadorFramesAmostra: number;
+      blocos: AcumuladorBloco[];
+      tempo1: { distancia: number; tempoSegundos: number; hsr: number; sprints: number };
+      tempo2: { distancia: number; tempoSegundos: number; hsr: number; sprints: number };
     }
   > = {};
 
@@ -168,7 +220,10 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
       somaY2: 0,
       numAmostrasValidas: 0,
       somaPotenciaMetabolicaPonderada: 0,
-      contadorFramesAmostra: 0
+      contadorFramesAmostra: 0,
+      blocos: criarBlocosIniciais(),
+      tempo1: { distancia: 0, tempoSegundos: 0, hsr: 0, sprints: 0 },
+      tempo2: { distancia: 0, tempoSegundos: 0, hsr: 0, sprints: 0 }
     };
   });
 
@@ -179,6 +234,7 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
 
     const dados = linha.split(',');
     const tempo = parseFloat(dados[2]); // Coluna de tempo em segundos
+    const periodo = parseInt(dados[0]) || (tempo < 2700 ? 1 : 2);
 
     if (isNaN(tempo)) continue;
 
@@ -316,6 +372,39 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
             }
           }
 
+          // Segmentação Temporal em Blocos de 15 minutos (0 a 5)
+          const blocoIdx = Math.min(5, Math.max(0, Math.floor(tempo / 900)));
+          const bloco = item.blocos[blocoIdx];
+          bloco.distancia += distancia;
+          bloco.tempoSegundos += deltaT;
+          if (vKmhInstantanea > bloco.velocidadeMaxima) {
+            bloco.velocidadeMaxima = vKmhInstantanea;
+          }
+          if (vKmh > 19.8 && vKmh <= 25.2) {
+            bloco.distanciaHSR += distancia;
+          } else if (vKmh > 25.2) {
+            bloco.distanciaSprint += distancia;
+            bloco.distanciaHSR += distancia;
+          }
+          if (isSprinting && (!prev.emSprint || (tempo - prev.tempoUltimoSprint > 1.2))) {
+            bloco.sprintsContagem++;
+          }
+          if (isAcelerandoAlto && (!prev.emAceleracaoAlta || (tempo - prev.tempoUltimaAcelAlta > 1.5))) {
+            bloco.aceleracoesAltas++;
+          }
+
+          // Segmentação 1º Tempo vs 2º Tempo
+          const isPrimeiroTempo = periodo === 1 || tempo < 2700;
+          const tempoAcc = isPrimeiroTempo ? item.tempo1 : item.tempo2;
+          tempoAcc.distancia += distancia;
+          tempoAcc.tempoSegundos += deltaT;
+          if (vKmh > 19.8) {
+            tempoAcc.hsr += distancia;
+          }
+          if (isSprinting && (!prev.emSprint || (tempo - prev.tempoUltimoSprint > 1.2))) {
+            tempoAcc.sprints++;
+          }
+
           // Potência Metabólica (Metabolic Power - Di Prampero & Osgnach, 2010)
           let custoEnergetico = 3.6; // Custo basal de corrida em linha reta plana
           if (a > 0) {
@@ -428,6 +517,99 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
     met.distanciaMediaSprint = Math.round(met.distanciaMediaSprint * 10) / 10;
     met.potenciaMetabolicaMedia = Math.round(met.potenciaMetabolicaMedia * 10) / 10;
     met.distanciaAltaPotenciaMetabolica = Math.round(met.distanciaAltaPotenciaMetabolica * 10) / 10;
+
+    // Pós-processamento dos Blocos Temporais (15 minutos)
+    const rotulosBlocos = ["0-15'", "15-30'", "30-45'", "45-60'", "60-75'", "75-90'+"];
+    let picoMmin = 0;
+
+    const blocosFormatados: BlocoTemporal[] = item.blocos.map((b, idx) => {
+      const mMin = b.tempoSegundos > 0 ? (b.distancia / b.tempoSegundos) * 60 : 0;
+      if (mMin > picoMmin) picoMmin = mMin;
+      return {
+        indice: idx,
+        rotulo: rotulosBlocos[idx],
+        tempoInicioMinutos: idx * 15,
+        tempoFimMinutos: (idx + 1) * 15,
+        distanciaTotal: Math.round(b.distancia * 10) / 10,
+        metrosPorMinuto: Math.round(mMin * 10) / 10,
+        distanciaHSR: Math.round(b.distanciaHSR * 10) / 10,
+        distanciaSprint: Math.round(b.distanciaSprint * 10) / 10,
+        sprintsContagem: b.sprintsContagem,
+        velocidadeMaxima: Math.round(b.velocidadeMaxima * 10) / 10,
+        aceleracoesAltas: b.aceleracoesAltas,
+        decaimentoPercentual: 0,
+        classificacao: 'estavel'
+      };
+    });
+
+    let primeiroBlocoQueda = '';
+    let maiorQuedaPercentual = 0;
+
+    blocosFormatados.forEach((b) => {
+      if (picoMmin > 0) {
+        b.decaimentoPercentual = Math.round(((b.metrosPorMinuto - picoMmin) / picoMmin) * 1000) / 10;
+      }
+      if (b.metrosPorMinuto >= picoMmin * 0.95 && picoMmin > 0) {
+        b.classificacao = 'pico';
+      } else if (b.decaimentoPercentual >= -10) {
+        b.classificacao = 'estavel';
+      } else if (b.decaimentoPercentual >= -20) {
+        b.classificacao = 'queda-moderada';
+        if (!primeiroBlocoQueda && b.indice > 0 && b.distanciaTotal > 0) primeiroBlocoQueda = b.rotulo;
+        if (Math.abs(b.decaimentoPercentual) > maiorQuedaPercentual) {
+          maiorQuedaPercentual = Math.abs(b.decaimentoPercentual);
+        }
+      } else {
+        b.classificacao = 'queda-severa';
+        if (!primeiroBlocoQueda && b.indice > 0 && b.distanciaTotal > 0) primeiroBlocoQueda = b.rotulo;
+        if (Math.abs(b.decaimentoPercentual) > maiorQuedaPercentual) {
+          maiorQuedaPercentual = Math.abs(b.decaimentoPercentual);
+        }
+      }
+    });
+
+    met.blocosTemporais = blocosFormatados;
+
+    // 1º Tempo vs 2º Tempo
+    const mMinT1 = item.tempo1.tempoSegundos > 0 ? (item.tempo1.distancia / item.tempo1.tempoSegundos) * 60 : 0;
+    const mMinT2 = item.tempo2.tempoSegundos > 0 ? (item.tempo2.distancia / item.tempo2.tempoSegundos) * 60 : 0;
+    met.analisePrimeiroTempo = {
+      distancia: Math.round(item.tempo1.distancia * 10) / 10,
+      metrosPorMinuto: Math.round(mMinT1 * 10) / 10,
+      hsr: Math.round(item.tempo1.hsr * 10) / 10,
+      sprints: item.tempo1.sprints
+    };
+    met.analiseSegundoTempo = {
+      distancia: Math.round(item.tempo2.distancia * 10) / 10,
+      metrosPorMinuto: Math.round(mMinT2 * 10) / 10,
+      hsr: Math.round(item.tempo2.hsr * 10) / 10,
+      sprints: item.tempo2.sprints
+    };
+    met.decaimentoSegundoTempoPercentual = mMinT1 > 0 ? Math.round(((mMinT2 - mMinT1) / mMinT1) * 1000) / 10 : 0;
+
+    const momentoQueda = primeiroBlocoQueda || (met.decaimentoSegundoTempoPercentual < -12 ? 'No 2º Tempo' : 'Intensidade Mantida');
+    let tipoFadiga = 'Pacing Estável (Intensidade Homogênea)';
+    let recomendacao = 'Atleta manteve distribuição homogênea de esforço. Excelente capacidade de tolerância neuromuscular e pacing.';
+    let gravidade: 'normal' | 'alerta' | 'critico' = 'normal';
+
+    if (maiorQuedaPercentual >= 25 || (met.decaimentoSegundoTempoPercentual && met.decaimentoSegundoTempoPercentual <= -22)) {
+      tipoFadiga = 'Fadiga Cumulativa Severa (Queda Acentuada)';
+      recomendacao = `Queda acentuada de ${maiorQuedaPercentual.toFixed(1)}% detectada (${momentoQueda}). Recomenda-se substituição prioritária por volta dos 65-70 min para preservar o bloco defensivo e evitar lesões musculares.`;
+      gravidade = 'critico';
+    } else if (maiorQuedaPercentual >= 15 || (met.decaimentoSegundoTempoPercentual && met.decaimentoSegundoTempoPercentual <= -12)) {
+      tipoFadiga = 'Fadiga Moderada / Queda de Final de Partida';
+      recomendacao = `Redução perceptível de intensidade no bloco ${momentoQueda}. Monitorar hidratação, tempo de recuperação entre tiros e considerar substituição tática.`;
+      gravidade = 'alerta';
+    }
+
+    met.momentoQuedaIntensidade = momentoQueda;
+    met.diagnosticoFadiga = {
+      tipo: tipoFadiga,
+      momentoQueda,
+      quedaPercentual: maiorQuedaPercentual,
+      recomendacaoComissao: recomendacao,
+      gravidade
+    };
 
     return met;
   });
