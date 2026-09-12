@@ -16,11 +16,17 @@ export interface MetricaJogador {
   metrosPorMinuto: number; // M/min (índice ouro de intensidade no futebol)
   tempoTotalSegundos: number; // segundos jogados/rastreados
 
-  // Zonas de Velocidade (metros)
+  // Zonas de Velocidade (metros) - Compatibilidade e 5 Zonas Padronizadas
   distanciaAndando: number; // <= 7.2 km/h
   distanciaTrotando: number; // > 7.2 e <= 14.4 km/h
   distanciaCorrendo: number; // > 14.4 e <= 19.8 km/h
   distanciaSprint: number; // > 19.8 km/h
+  distanciaZ1Caminhada: number; // 0 a 7.2 km/h
+  distanciaZ2Trote: number; // 7.2 a 14.4 km/h
+  distanciaZ3Media: number; // 14.4 a 19.8 km/h
+  distanciaZ4HSR: number; // 19.8 a 25.2 km/h (High-Speed Running)
+  distanciaZ5Sprint: number; // > 25.2 km/h (Sprint Puro)
+  minutosJogados: number; // minutos totais jogados na partida
 
   // Dinâmica Inercial & Acelerações (Neuromuscular / Carga Mecânica)
   aceleracoesAltas: number; // Ações discretas com a >= +2.5 m/s²
@@ -35,6 +41,7 @@ export interface MetricaJogador {
 
   // Análise de Sprints (Ações e Duração)
   sprintsContagem: number; // quantidade de tiros > 19.8 km/h
+  sprintsPicosContagem: number; // quantidade de tiros > 25.2 km/h (critério ouro)
   distanciaMediaSprint: number; // metros médios por tiro de sprint
 
   // Potência Metabólica (Metabolic Power - Di Prampero & Osgnach)
@@ -130,6 +137,12 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
         distanciaTrotando: 0,
         distanciaCorrendo: 0,
         distanciaSprint: 0,
+        distanciaZ1Caminhada: 0,
+        distanciaZ2Trote: 0,
+        distanciaZ3Media: 0,
+        distanciaZ4HSR: 0,
+        distanciaZ5Sprint: 0,
+        minutosJogados: 0,
         aceleracoesAltas: 0,
         aceleracoesExplosivas: 0,
         desaceleracoesAltas: 0,
@@ -231,22 +244,32 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
             met.velocidadeMaxima = vKmhInstantanea;
           }
 
-          // Zonas de Velocidade
+          // Zonas de Velocidade (4 faixas legadas e 5 faixas padronizadas do TCC)
           if (vKmh <= 7.2) {
             met.distanciaAndando += distancia;
+            met.distanciaZ1Caminhada += distancia;
           } else if (vKmh <= 14.4) {
             met.distanciaTrotando += distancia;
+            met.distanciaZ2Trote += distancia;
           } else if (vKmh <= 19.8) {
             met.distanciaCorrendo += distancia;
+            met.distanciaZ3Media += distancia;
+          } else if (vKmh <= 25.2) {
+            met.distanciaSprint += distancia;
+            met.distanciaZ4HSR += distancia;
           } else {
             met.distanciaSprint += distancia;
+            met.distanciaZ5Sprint += distancia;
           }
 
-          // Detecção de Esforço de Sprint (com período refratário de 1s para contar eventos reais)
+          // Detecção de Esforço de Sprint (> 19.8 km/h e picos de ouro > 25.2 km/h)
           const isSprinting = vKmh > 19.8;
           if (isSprinting && (!prev.emSprint || (tempo - prev.tempoUltimoSprint > 1.2))) {
             met.sprintsContagem++;
             prev.tempoUltimoSprint = tempo;
+          }
+          if (vKmh > 25.2 && (!prev.emSprint || (tempo - prev.tempoUltimoSprint > 1.2))) {
+            met.sprintsPicosContagem = (met.sprintsPicosContagem || 0) + 1;
           }
 
           // Aceleração escalar suavizada (m/s²)
@@ -382,7 +405,13 @@ export function processarRastreamento(conteudoCsv: string): MetricaJogador[] {
     }
 
     // Normalizar arredondamentos para precisão limpa
+    met.minutosJogados = Math.round((met.tempoTotalSegundos / 60) * 10) / 10;
     met.distanciaTotal = Math.round(met.distanciaTotal * 10) / 10;
+    met.distanciaZ1Caminhada = Math.round((met.distanciaZ1Caminhada || 0) * 10) / 10;
+    met.distanciaZ2Trote = Math.round((met.distanciaZ2Trote || 0) * 10) / 10;
+    met.distanciaZ3Media = Math.round((met.distanciaZ3Media || 0) * 10) / 10;
+    met.distanciaZ4HSR = Math.round((met.distanciaZ4HSR || 0) * 10) / 10;
+    met.distanciaZ5Sprint = Math.round((met.distanciaZ5Sprint || 0) * 10) / 10;
     met.velocidadeMaxima = Math.round(met.velocidadeMaxima * 10) / 10;
     met.velocidadeMedia = Math.round(met.velocidadeMedia * 10) / 10;
     met.metrosPorMinuto = Math.round(met.metrosPorMinuto * 10) / 10;
